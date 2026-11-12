@@ -20,9 +20,13 @@
     New commits are appended to the end of the file.
 
 .PARAMETER ConfigPath
-    Path to a .psd1 config file holding the three settings Target, Output and
-    LogFileName. See Example.psd1. Relative Target/Output paths in the config
-    are taken relative to the folder the config file is in.
+    Path to a .psd1 config file holding the settings Target, Output and
+    LogFileName, plus the optional OmitSummary. See Example.psd1. Relative
+    Target/Output paths in the config are taken relative to the folder the
+    config file is in.
+
+    OmitSummary = $true writes "(omitted)" in place of every commit summary,
+    including summaries already in the log from earlier runs.
 
 .PARAMETER Force
     Skip the safety check that stops the script when none of the commits already in
@@ -66,6 +70,16 @@ if (-not [IO.Path]::IsPathRooted($Output)) { $Output = Join-Path $configDir $Out
 if ($LogFileName.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
     throw "LogFileName must be a file name only, without a folder path: $LogFileName"
 }
+
+# Optional setting: leave commit summaries out of the log (for privacy-sensitive repos).
+$OmitSummary = $false
+if ($config.ContainsKey('OmitSummary')) {
+    if ($config['OmitSummary'] -isnot [bool]) {
+        throw "Config file '$ConfigPath': OmitSummary must be `$true or `$false (no quotes)."
+    }
+    $OmitSummary = $config['OmitSummary']
+}
+$OmittedText = '(omitted)'    # written in place of the summary when OmitSummary is on
 
 Write-Host "Config: $ConfigPath"
 
@@ -121,6 +135,7 @@ try {
     $epoch       = New-Object DateTime 1970, 1, 1, 0, 0, 0, ([DateTimeKind]::Utc)
     $invariant   = [Globalization.CultureInfo]::InvariantCulture
     $current     = @{}     # hash -> finished log line (with "+" status)
+    $summaries   = @{}     # hash -> summary text as it should appear in the log
     $order       = New-Object System.Collections.Generic.List[string]   # hashes, oldest first
     $authorKeys  = @{}     # "author time + author email" of every current commit
 
@@ -132,6 +147,8 @@ try {
         $hash    = $parts[0]
         $date    = $epoch.AddSeconds([long]$parts[1]).ToString('yyyyMMdd-HHmm', $invariant)
         $summary = ($parts[4] -replace '[\x00-\x1f\x7f]', ' ').TrimEnd()
+        if ($OmitSummary) { $summary = $OmittedText }
+        $summaries[$hash] = $summary
 
         if (-not $current.ContainsKey($hash)) {
             $current[$hash] = '+' + $Tab + $date + $Tab + $hash + $Tab + $summary
@@ -155,7 +172,12 @@ try {
         }
     }
     else {
-        $lines.Add('# Columns (tab-separated): Status, Commit date-time in UTC (YYYYMMDD-HHMM), Commit hash, Commit summary')
+        if ($OmitSummary) {
+            $lines.Add('# Columns (tab-separated): Status, Commit date-time in UTC (YYYYMMDD-HHMM), Commit hash, Commit summary (omitted for privacy)')
+        }
+        else {
+            $lines.Add('# Columns (tab-separated): Status, Commit date-time in UTC (YYYYMMDD-HHMM), Commit hash, Commit summary')
+        }
         $lines.Add('# Status: + = commit is in the repo history, ~ = commit was changed (amended/rebased; replaced by a newer commit),')
         $lines.Add('#         - = commit was removed from the history, ? = commit disappeared (no longer found in the repo)')
     }
@@ -166,6 +188,7 @@ try {
     $entryCount   = 0
     $foundCount   = 0      # logged commits that git still knows about in any form
     $unreadable   = 0
+    $summaryChanges = 0
     $changes      = @{ '+' = 0; '~' = 0; '-' = 0; '?' = 0 }
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -209,9 +232,22 @@ try {
             }
         }
 
-        if ($newStatus -ne $oldStatus) {
-            $lines[$i] = $newStatus + $line.Substring(1)
-            $changes[$newStatus]++
+        # Summary: blank it out when OmitSummary is on (this also covers lines written
+        # before the setting was turned on). When the setting is off again, omitted
+        # summaries are filled back in for commits git can still list.
+        $oldSummary = $match.Groups[4].Value
+        $newSummary = $oldSummary
+        if ($OmitSummary) {
+            $newSummary = $OmittedText
+        }
+        elseif ($oldSummary -ceq $OmittedText -and $summaries.ContainsKey($hash)) {
+            $newSummary = $summaries[$hash]
+        }
+
+        if ($newStatus -ne $oldStatus) { $changes[$newStatus]++ }
+        if ($newSummary -cne $oldSummary) { $summaryChanges++ }
+        if ($newStatus -ne $oldStatus -or $newSummary -cne $oldSummary) {
+            $lines[$i] = $newStatus + $Tab + $match.Groups[2].Value + $Tab + $hash + $Tab + $newSummary
         }
     }
 
@@ -248,6 +284,9 @@ try {
         Write-Host ("  Marked - (removed)     : {0}" -f $changes['-'])
         Write-Host ("  Marked ? (disappeared) : {0}" -f $changes['?'])
         Write-Host ("  Restored to +          : {0}" -f $changes['+'])
+        if ($summaryChanges -gt 0) {
+            Write-Host ("  Summaries rewritten    : {0}" -f $summaryChanges)
+        }
         Write-Host ("  Total commits in log   : {0}" -f ($entryCount + $added))
     }
 

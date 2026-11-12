@@ -14,4 +14,9 @@
 
     # Name of the log file (file name only, no folder).
     LogFileName = 'TrackedRepo_CommitHistory.log'
+
+    # Optional. $true = write "(omitted)" instead of commit summaries, for
+    # privacy-sensitive repos. Hashes and dates are still logged.
+    # Write $true or $false without quotes. Leaving this line out means $false.
+    OmitSummary = $false
 }
