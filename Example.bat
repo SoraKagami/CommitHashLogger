@@ -1,10 +1,17 @@
 @echo off
-rem Runs CommitHashLogger.ps1 with a config file from the same folder as this .bat.
-rem Copy the "powershell" line once per config file to update several logs in one go.
-rem Add -Force after the config path to skip the wrong-repo safety check.
+setlocal
+rem Runs CommitHashLogger.ps1 with a config file.
+rem %~dp0 is the folder this .bat is in; replace it with a full path if the files live elsewhere.
+rem Add -Force after "%ConfigFile%" on the powershell line to skip the wrong-repo safety check.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0CommitHashLogger.ps1" "%~dp0Example.psd1"
-if errorlevel 1 echo. & echo *** CommitHashLogger reported an error for Example.psd1 ***
+set "ScriptLocation=%~dp0CommitHashLogger.ps1"
+set "ConfigFile=%~dp0Example.psd1"
+
+rem Take just the file name (name + extension) out of the ConfigFile path, for messages.
+for %%F in ("%ConfigFile%") do set "ConfigName=%%~nxF"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ScriptLocation%" "%ConfigFile%"
+if errorlevel 1 echo. & echo *** CommitHashLogger reported an error for %ConfigName% ***
 
 echo.
 pause
