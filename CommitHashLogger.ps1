@@ -19,22 +19,55 @@
     Lines are never deleted. When a commit goes away, only its status character changes.
     New commits are appended to the end of the file.
 
+.PARAMETER ConfigPath
+    Path to a .psd1 config file holding the three settings Target, Output and
+    LogFileName. See Example.psd1. Relative Target/Output paths in the config
+    are taken relative to the folder the config file is in.
+
 .PARAMETER Force
     Skip the safety check that stops the script when none of the commits already in
     the log can be found in Target (which normally means the wrong repo or log file).
+
+.EXAMPLE
+    powershell -NoProfile -ExecutionPolicy Bypass -File CommitHashLogger.ps1 MyRepo.psd1
 #>
 param(
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$ConfigPath,
+
     [switch]$Force
 )
 
-# ============================== USER SETTINGS ==============================
-$Target      = 'D:\Path\To\TrackedRepo'           # root folder of the git repo to read
-$Output      = 'D:\Path\To\OutputFolder'          # folder the log file is written to
-$LogFileName = 'TrackedRepo_CommitHistory.log'    # name of the log file
-# ===========================================================================
-
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
+
+# ------------------------------ load config ------------------------------
+if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    throw "Config file not found: $ConfigPath"
+}
+$ConfigPath = (Resolve-Path -LiteralPath $ConfigPath).ProviderPath
+$configDir  = Split-Path -Parent $ConfigPath
+
+# Import-PowerShellDataFile only reads data; it cannot run code from the file.
+$config = Import-PowerShellDataFile -LiteralPath $ConfigPath
+
+foreach ($key in 'Target', 'Output', 'LogFileName') {
+    if (-not $config.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$config[$key])) {
+        throw "Config file '$ConfigPath' is missing a value for '$key'."
+    }
+}
+
+$Target      = [string]$config['Target']
+$Output      = [string]$config['Output']
+$LogFileName = [string]$config['LogFileName']
+
+if (-not [IO.Path]::IsPathRooted($Target)) { $Target = Join-Path $configDir $Target }
+if (-not [IO.Path]::IsPathRooted($Output)) { $Output = Join-Path $configDir $Output }
+if ($LogFileName.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+    throw "LogFileName must be a file name only, without a folder path: $LogFileName"
+}
+
+Write-Host "Config: $ConfigPath"
 
 $Tab = "`t"
 
